@@ -26,3 +26,46 @@ Testing if the build is correct using a provided example by emitting LLVM code
 ```bash
 ./bin/toyc-ch6 ../mlir/test/Examples/Toy/Ch6/codegen.toy -emit=llvm
 ```
+
+### Second, I add the operations I want to
+
+Defining a new operation called squared relu
+```tablegen
+def SquareReLUOp : Toy_Op<"square_relu", [Pure, SameOperandsAndResultShape, ELementwise, NOperands<1>, NResults<1>]> {
+  let summary = "squares element wise and applies relu activation";
+
+  let argument = (ins AnyTensor:$input);
+  let results = (outs AnyTensor:$result);
+
+  let assemblyFormat = "$input attr-dict `:` type($input) `->` type($result)";
+}
+```
+
+Making sure 
+```cpp
+#define GET_OP_CLASSES
+#include "toy/Dialect.h.inc"
+```
+is present in Dialect.h 
+
+and
+
+```cpp
+#define GET_OP_CLASSES
+#include "toy/Ops.cpp.inc"
+```
+is present in Dialect.cpp
+
+Above is because since we already built the chapter, we should have these definitions. Otherwise, we add them. These represent the linkage for the auto generated C++ code from the previous build from Ops.td
+
+
+Now I go to
+```bash
+cd llvm-project/build
+```
+
+and build to generate C++ code for the new Square ReLU operation
+```bash
+ninja toyc-ch6
+```
+
