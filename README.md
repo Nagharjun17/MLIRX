@@ -58,7 +58,7 @@ Making sure
 #define GET_OP_CLASSES
 #include "toy/Dialect.h.inc"
 ```
-is present in Dialect.h 
+is present in `Dialect.h`
 
 and
 
@@ -66,7 +66,7 @@ and
 #define GET_OP_CLASSES
 #include "toy/Ops.cpp.inc"
 ```
-is present in Dialect.cpp
+is present in `Dialect.cpp`
 
 Above is because since we already built the chapter, we should have these definitions. Otherwise, we add them. These represent the linkage for the auto generated C++ code from the previous build from Ops.td
 
@@ -86,6 +86,10 @@ ninja toyc-ch6
 
 Creating a lowering pass for Max operation inside `LowerToAffineLoops.cpp`
 ```cpp
+#include "CustomLowering.h"
+
+//,,,,,,,,,,,,,,,,,,,
+
 struct MaxOpLowering : public OpConversionPattern<toy::MaxOp> {
   using OpConversionPattern<toy::MaxOp>::OpConversionPattern;
   using OpAdaptor = typename OpConversionPattern<toy::MaxOp>::OpAdaptor;
@@ -104,7 +108,7 @@ struct MaxOpLowering : public OpConversionPattern<toy::MaxOp> {
     });
 
     return success();
-  })
+  }
 };
 ```
 
@@ -114,7 +118,11 @@ Creating a lowering pass for Square ReLU operation in a separate file `CustomLow
 #include "toy/Passes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "llvm/Support/Casting.h"
+#include "mlir/Transforms/DialectConversion.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "CustomLowering.h"
 
 using namespace mlir;
 using namespace toy;
@@ -126,24 +134,69 @@ struct SquareReluLowering : public OpConversionPattern<SquareReLUOp> {
 
     LogicalResult matchAndRewrite(SquareReLUOp op, OpAdaptor adaptor, ConversionPatternRewriter &rewriter) const final {
         auto loc = op->getLoc();
-        auto input = adaptor.getInput();
+        auto input = adaptor.getInput(); //get input value
 
-        auto mul = rewriter.create<MulOp>(loc, input, input);
+        auto mul = rewriter.create<MulOp>(loc, input, input); //perform square operation
 
-        auto tensorType = input.getType().cast<RankedTensorType>();
-        auto elementType = tensorType.getElementType().cast<FloatType>();
-        auto zeroAttr = rewriter.getFloatAttr(elemTy, 0.0);
-        auto zeros = SplatElementsAttr::get(tensorType, zeroAttr);
-        auto zeroConst = rewriter.create<ConstantOp>(loc, zeros);
+        auto tensorType = llvm::cast<RankedTensorType>(input.getType()); //get input type and cast it to ranked tensor type
+        auto elementType = llvm::cast<FloatType>(tensorType.getElementType()); //get element type inside tensor and cast it to float
+        auto zeroAttr = rewriter.getFloatAttr(elemTy, 0.0); //creating attribute representing constant 0.0 of type elementType
+        auto zeros = SplatElementsAttr::get(tensorType, zeroAttr); //creates a tensor with 0.0s
+        auto zeroConst = rewriter.create<ConstantOp>(loc, zeros); //create a constant in toy dialect for further lowering
 
-        auto relu = rewriter.create<MaxOp>(loc, mul, zeroConst);
+        auto relu = rewriter.create<MaxOp>(loc, mul.getType(), mul, zeroConst);
 
         rewriter.replaceOp(op, relu.getResult());
         return success();
     }
 };
 }
+
+void mlir::toy::populateToyCustomLowerings(RewritePatternSet &patterns) {
+  patterns.add<SquareReluLowering>(patterns.getContext());
+}
 ```
 
+Create new `CustomLowering.h` to register the newly created ops in other cpp files
+```cpp
+#pragma once
+#include <mlir/IR/PatternMatch.h>
 
+namespace mlir::toy {
+  void populateToyCustomLowerings(mlir::RewritePatternSet &patterns);
+}
+```
 
+Registering the patterns inside `LowerToAffineLoops.cpp`
+```cpp
+#include "CustomLowering.h"
+
+//...........
+
+patterns.add<AddOpLowering, ConstantOpLowering, FuncOpLowering,
+             MulOpLowering, PrintOpLowering, ReturnOpLowering,
+             TransposeOpLowering,
+             MaxOpLowering //created new MaxOp
+             >
+            (&getContext());
+populateToyCustomLowerings(patterns); //created new SquareReLUOp
+```
+
+Since we created a new file `CustomLowering.cpp`, add `mlir/CustomLowering.cpp` to `mlir/examples/toy/Ch6/CMakeLists.txt` like given below:
+```txt
+add_toy_chapter(toyc-ch6
+  toyc.cpp
+  parser/AST.cpp
+  mlir/MLIRGen.cpp
+  mlir/Dialect.cpp
+  mlir/LowerToAffineLoops.cpp
+  mlir/LowerToLLVM.cpp
+  mlir/ShapeInferencePass.cpp
+  mlir/ToyCombine.cpp
+  mlir/CustomLowering.cpp
+```
+
+Build again
+```bash
+ninja toyc-ch6
+```
