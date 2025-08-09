@@ -41,6 +41,18 @@ def SquareReLUOp : Toy_Op<"square_relu", [Pure, SameOperandsAndResultShape, ELem
 }
 ```
 
+For relu, I will also need an element wise max operation
+```tablegen
+def MaxOp : Toy_Op<"max", [Pure]> {
+  let summary = "finds and returns elementwise max";
+
+  let arguments = (ins AnyTensor:$input1, AnyTensor:$input2);
+  let results = (outs AnyTensor:$result);
+
+  let assemblyFormat = "$input1 `,` $input2 attr-dict `:` type($input1) `,` type($input2) `->` type($result)";
+}
+```
+
 Making sure 
 ```cpp
 #define GET_OP_CLASSES
@@ -64,8 +76,74 @@ Now I go to
 cd llvm-project/build
 ```
 
-and build to generate C++ code for the new Square ReLU operation
+
+
+and build to generate C++ code for the new Square ReLU and Max operations
 ```bash
 ninja toyc-ch6
 ```
+
+
+Creating a lowering pass for Max operation inside `LowerToAffineLoops.cpp`
+```cpp
+struct MaxOpLowering : public OpConversionPattern<toy::MaxOp> {
+  using OpConversionPattern<toy::MaxOp>::OpConversionPattern;
+  using OpAdaptor = typename OpConversionPattern<toy::MaxOp>::OpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(toy::MaxOp op, OpAdaptor adaptor, ConversionPatternRewriter &rewriter) const final {
+    auto loc = op->getLoc(); //get location for future debugging
+    
+    lowerOpToLoops(op, rewriter, [&](OpBuilder &builder, ValueRange loopIvs) {
+      auto input1 = affine::AffineLoadOp::create(builder, loc, adaptor.getInput1(), loopIvs); //load input 1
+      auto input2 = affine::AffineLoadOp::create(builder, loc, adaptor.getInput2(), loopIvs); //load input 2
+
+      auto compare = builder.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OGT, input1, input2); //perform a comparison operation using a Ordered Greater Than predicate
+      
+      return builder.create<arith::SelectOp>(loc, compare, input1, input2); //apply the max operation and return
+    });
+
+    return success();
+  })
+};
+```
+
+Creating a lowering pass for Square ReLU operation in a separate file `CustomLowering.cpp` because it is much higher level than other ops.
+```cpp
+#include "toy/Dialect.h"
+#include "toy/Passes.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/BuiltinAttributes.h"
+
+using namespace mlir;
+using namespace toy;
+
+namespace {
+struct SquareReluLowering : public OpConversionPattern<SquareReLUOp> {
+    using OpConversionPattern<SquareReLUOp>::OpConversionPattern;
+    using OpAdaptor = typename OpConversionPattern<SquareReLUOp>::OpAdaptor;
+
+    LogicalResult matchAndRewrite(SquareReLUOp op, OpAdaptor adaptor, ConversionPatternRewriter &rewriter) const final {
+        auto loc = op->getLoc();
+        auto input = adaptor.getInput();
+
+        auto mul = rewriter.create<MulOp>(loc, input, input);
+
+        auto tensorType = input.getType().cast<RankedTensorType>();
+        auto elementType = tensorType.getElementType().cast<FloatType>();
+        auto zeroAttr = rewriter.getFloatAttr(elemTy, 0.0);
+        auto zeros = SplatElementsAttr::get(tensorType, zeroAttr);
+        auto zeroConst = rewriter.create<ConstantOp>(loc, zeros);
+
+        auto relu = rewriter.create<MaxOp>(loc, mul, zeroConst);
+
+        rewriter.replaceOp(op, relu.getResult());
+        return success();
+    }
+};
+}
+```
+
+
 
