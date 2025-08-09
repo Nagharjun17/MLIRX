@@ -133,10 +133,8 @@ struct SquareReluLowering : public OpConversionPattern<SquareReLUOp> {
     using OpAdaptor = typename OpConversionPattern<SquareReLUOp>::OpAdaptor;
 
     LogicalResult matchAndRewrite(SquareReLUOp op, OpAdaptor adaptor, ConversionPatternRewriter &rewriter) const final {
-        auto loc = op->getLoc();
-        auto input = adaptor.getInput(); //get input value
-
-        auto mul = rewriter.create<MulOp>(loc, input, input); //perform square operation
+        Location loc = op->getLoc();
+        Value input = adaptor.getInput(); //get input value
 
         auto tensorType = llvm::cast<RankedTensorType>(input.getType()); //get input type and cast it to ranked tensor type
         auto elementType = llvm::cast<FloatType>(tensorType.getElementType()); //get element type inside tensor and cast it to float
@@ -144,7 +142,8 @@ struct SquareReluLowering : public OpConversionPattern<SquareReLUOp> {
         auto zeros = SplatElementsAttr::get(tensorType, zeroAttr); //creates a tensor with 0.0s
         auto zeroConst = rewriter.create<ConstantOp>(loc, zeros); //create a constant in toy dialect for further lowering
 
-        auto relu = rewriter.create<MaxOp>(loc, mul.getType(), mul, zeroConst);
+        auto mul  = rewriter.create<toy::MulOp>(loc, tensorType, input, input); //perform square operation
+        auto relu = rewriter.create<toy::MaxOp>(loc, tensorType, mul, zeroConst);
 
         rewriter.replaceOp(op, relu.getResult());
         return success();
@@ -179,7 +178,7 @@ patterns.add<AddOpLowering, ConstantOpLowering, FuncOpLowering,
              MaxOpLowering //created new MaxOp
              >
             (&getContext());
-populateToyCustomLowerings(patterns); //created new SquareReLUOp
+mlir::toy::populateToyCustomLowerings(patterns); //created new SquareReLUOp
 ```
 
 Since we created a new file `CustomLowering.cpp`, add `mlir/CustomLowering.cpp` to `mlir/examples/toy/Ch6/CMakeLists.txt` like given below:
