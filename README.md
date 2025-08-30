@@ -138,7 +138,7 @@ struct SquareReluLowering : public OpConversionPattern<SquareReLUOp> {
 
         auto tensorType = llvm::cast<RankedTensorType>(input.getType()); //get input type and cast it to ranked tensor type
         auto elementType = llvm::cast<FloatType>(tensorType.getElementType()); //get element type inside tensor and cast it to float
-        auto zeroAttr = rewriter.getFloatAttr(elemTy, 0.0); //creating attribute representing constant 0.0 of type elementType
+        auto zeroAttr = rewriter.getFloatAttr(elementType, 0.0); //creating attribute representing constant 0.0 of type elementType
         auto zeros = SplatElementsAttr::get(tensorType, zeroAttr); //creates a tensor with 0.0s
         auto zeroConst = rewriter.create<ConstantOp>(loc, zeros); //create a constant in toy dialect for further lowering
 
