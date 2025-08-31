@@ -38,6 +38,10 @@ def SquareReLUOp : Toy_Op<"square_relu", [Pure, SameOperandsAndResultShape, ELem
   let results = (outs AnyTensor:$result);
 
   let assemblyFormat = "$input attr-dict `:` type($input) `->` type($result)";
+
+  let builders = [
+    OpBuilder<(ins "Value":$input)>
+  ];
 }
 ```
 
@@ -50,6 +54,10 @@ def MaxOp : Toy_Op<"max", [Pure]> {
   let results = (outs AnyTensor:$result);
 
   let assemblyFormat = "$input1 `,` $input2 attr-dict `:` type($input1) `,` type($input2) `->` type($result)";
+
+  let builders = [
+    OpBuilder<(ins "Value":$input1, "Value":$input2)>
+  ];
 }
 ```
 
@@ -99,8 +107,8 @@ struct MaxOpLowering : public OpConversionPattern<toy::MaxOp> {
     auto loc = op->getLoc(); //get location for future debugging
     
     lowerOpToLoops(op, rewriter, [&](OpBuilder &builder, ValueRange loopIvs) {
-      auto input1 = affine::AffineLoadOp::create(builder, loc, adaptor.getInput1(), loopIvs); //load input 1
-      auto input2 = affine::AffineLoadOp::create(builder, loc, adaptor.getInput2(), loopIvs); //load input 2
+      auto input1 = builder.create<affine::AffineLoadOp>(loc, adaptor.getInput1(), loopIvs); //load input 1
+      auto input2 = builder.create<affine::AffineLoadOp>(loc, adaptor.getInput2(), loopIvs); //load input 2
 
       auto compare = builder.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OGT, input1, input2); //perform a comparison operation using a Ordered Greater Than predicate
       
@@ -139,11 +147,11 @@ struct SquareReluLowering : public OpConversionPattern<SquareReLUOp> {
         auto tensorType = llvm::cast<RankedTensorType>(input.getType()); //get input type and cast it to ranked tensor type
         auto elementType = llvm::cast<FloatType>(tensorType.getElementType()); //get element type inside tensor and cast it to float
         auto zeroAttr = rewriter.getFloatAttr(elementType, 0.0); //creating attribute representing constant 0.0 of type elementType
-        auto zeros = SplatElementsAttr::get(tensorType, zeroAttr); //creates a tensor with 0.0s
-        auto zeroConst = rewriter.create<ConstantOp>(loc, zeros); //create a constant in toy dialect for further lowering
+        auto zeros = DenseElementsAttr::get(tensorType, zeroAttr); //creates a tensor with 0.0s
+        auto zeroConst = toy::ConstantOp::create(rewriter, loc, zeros); //create a constant in toy dialect for further lowering
 
-        auto mul  = rewriter.create<toy::MulOp>(loc, tensorType, input, input); //perform square operation
-        auto relu = rewriter.create<toy::MaxOp>(loc, tensorType, mul, zeroConst);
+        auto mul  = rewriter.create<toy::MulOp>(loc, input, input); //perform square operation
+        auto relu = rewriter.create<toy::MaxOp>(loc, mul, zeroConst);
 
         rewriter.replaceOp(op, relu.getResult());
         return success();
@@ -180,6 +188,46 @@ patterns.add<AddOpLowering, ConstantOpLowering, FuncOpLowering,
             (&getContext());
 mlir::toy::populateToyCustomLowerings(patterns); //created new SquareReLUOp
 ```
+Registering the ops in `Dialect.cpp`
+```cpp
+void MaxOp::build(mlir::OpBuilder &builder, mlir::OperationState &state,
+                  mlir::Value lhs, mlir::Value rhs) {
+  state.addTypes(lhs.getType());
+  state.addOperands({lhs, rhs});
+}
+
+void SquareReLUOp::build(mlir::OpBuilder &builder, mlir::OperationState &state,
+                         mlir::Value input) {
+  state.addTypes(input.getType());
+  state.addOperands(input);
+}
+```
+
+Emit specific operations for the newly defined ops inside `MLIRGen.cpp`.
+```cpp
+  mlir::Value mlirGen(CallExprAST &call) {
+    llvm::StringRef callee = call.getCallee();
+    auto location = loc(call.loc());
+
+    //..................
+
+      return TransposeOp::create(builder, location, operands[0]);
+    }
+
+    if (callee == "square_relu") {
+      if (operands.size() != 1) { emitError(location, "toy.square_relu needs 1 arg"); return nullptr; }
+      return SquareReLUOp::create(builder, location, operands[0]);
+    }
+    
+    if (callee == "max") {
+      if (operands.size() != 2) { emitError(location, "toy.max needs 2 args"); return nullptr; }
+      return MaxOp::create(builder, location, operands[0], operands[1]);
+    }
+
+    return GenericCallOp::create(builder, location, callee, operands);
+  }
+```
+
 
 Since we created a new file `CustomLowering.cpp`, add `mlir/CustomLowering.cpp` to `mlir/examples/toy/Ch6/CMakeLists.txt` like given below:
 ```txt
