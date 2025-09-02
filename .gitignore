@@ -1,0 +1,11 @@
+# never commit big trees/builds
+/build/
+llvm-project/
+compile_commands.json
+*.o
+*.so
+*.dylib
+*.a
+.DS_Store
+.vscode/
+.idea/
